@@ -1,0 +1,340 @@
+import sqlite3
+from datetime import date
+
+# Connect to SQLite database
+conn = sqlite3.connect("employee_management.db")
+cursor = conn.cursor()
+
+
+# ================= DATABASE SETUP =================
+
+cursor.execute("""
+CREATE TABLE IF NOT EXISTS employees (
+    employee_id INTEGER PRIMARY KEY,
+    name TEXT NOT NULL,
+    department TEXT NOT NULL,
+    monthly_salary REAL NOT NULL
+)
+""")
+
+cursor.execute("""
+CREATE TABLE IF NOT EXISTS attendance (
+    attendance_id INTEGER PRIMARY KEY AUTOINCREMENT,
+    employee_id INTEGER,
+    date TEXT NOT NULL,
+    status TEXT NOT NULL,
+    FOREIGN KEY (employee_id) REFERENCES employees(employee_id)
+)
+""")
+
+cursor.execute("""
+CREATE TABLE IF NOT EXISTS salary (
+    salary_id INTEGER PRIMARY KEY AUTOINCREMENT,
+    employee_id INTEGER,
+    month TEXT NOT NULL,
+    working_days INTEGER,
+    present_days INTEGER,
+    absent_days INTEGER,
+    salary REAL,
+    FOREIGN KEY (employee_id) REFERENCES employees(employee_id)
+)
+""")
+
+conn.commit()
+
+
+# ================= ADD EMPLOYEE =================
+
+def add_employee():
+
+    try:
+        emp_id = int(input("Enter Employee ID: "))
+
+        cursor.execute(
+            "SELECT * FROM employees WHERE employee_id = ?",
+            (emp_id,)
+        )
+
+        if cursor.fetchone():
+            print("Employee already exists!")
+            return
+
+        name = input("Enter employee name: ")
+        department = input("Enter department: ")
+        salary = float(input("Enter monthly salary: "))
+
+        if salary <= 0:
+            print("Salary must be greater than 0.")
+            return
+
+        cursor.execute("""
+        INSERT INTO employees
+        VALUES (?, ?, ?, ?)
+        """, (emp_id, name, department, salary))
+
+        conn.commit()
+
+        print("Employee added successfully!")
+
+    except ValueError:
+        print("Invalid input!")
+
+
+# ================= MARK ATTENDANCE =================
+
+def mark_attendance():
+
+    try:
+        emp_id = int(input("Enter Employee ID: "))
+
+        cursor.execute(
+            "SELECT name FROM employees WHERE employee_id = ?",
+            (emp_id,)
+        )
+
+        employee = cursor.fetchone()
+
+        if employee is None:
+            print("Employee not found!")
+            return
+
+        attendance_date = input(
+            "Enter date (YYYY-MM-DD): "
+        )
+
+        status = input(
+            "Enter status (P/A): "
+        ).upper()
+
+        if status not in ["P", "A"]:
+            print("Invalid status!")
+            return
+
+        cursor.execute("""
+        INSERT INTO attendance
+        (employee_id, date, status)
+        VALUES (?, ?, ?)
+        """, (emp_id, attendance_date, status))
+
+        conn.commit()
+
+        print("Attendance marked successfully!")
+
+
+    except ValueError:
+        print("Invalid input!")
+
+
+# ================= VIEW ATTENDANCE =================
+
+def view_attendance():
+
+    try:
+        emp_id = int(input("Enter Employee ID: "))
+
+        cursor.execute("""
+        SELECT date, status
+        FROM attendance
+        WHERE employee_id = ?
+        ORDER BY date
+        """, (emp_id,))
+
+        records = cursor.fetchall()
+
+        if not records:
+            print("No attendance records found.")
+            return
+
+        print("\nDate          Status")
+        print("--------------------")
+
+        for record in records:
+            status = "Present" if record[1] == "P" else "Absent"
+            print(record[0], "   ", status)
+
+    except ValueError:
+        print("Invalid Employee ID!")
+
+
+# ================= CALCULATE SALARY =================
+
+def calculate_salary():
+
+    try:
+        emp_id = int(input("Enter Employee ID: "))
+        month = input("Enter month (YYYY-MM): ")
+
+        cursor.execute("""
+        SELECT monthly_salary
+        FROM employees
+        WHERE employee_id = ?
+        """, (emp_id,))
+
+        employee = cursor.fetchone()
+
+        if employee is None:
+            print("Employee not found!")
+            return
+
+        monthly_salary = employee[0]
+
+        # Get attendance for selected month
+        cursor.execute("""
+        SELECT
+            COUNT(*),
+            SUM(CASE WHEN status = 'P' THEN 1 ELSE 0 END),
+            SUM(CASE WHEN status = 'A' THEN 1 ELSE 0 END)
+        FROM attendance
+        WHERE employee_id = ?
+        AND date LIKE ?
+        """, (emp_id, month + "%"))
+
+        result = cursor.fetchone()
+
+        working_days = result[0]
+
+        if working_days == 0:
+            print("No attendance records for this month.")
+            return
+
+        present_days = result[1] or 0
+        absent_days = result[2] or 0
+
+        # Salary calculation
+        salary = (monthly_salary / working_days) * present_days
+
+        cursor.execute("""
+        INSERT INTO salary
+        (employee_id, month, working_days,
+         present_days, absent_days, salary)
+        VALUES (?, ?, ?, ?, ?, ?)
+        """,
+        (
+            emp_id,
+            month,
+            working_days,
+            present_days,
+            absent_days,
+            salary
+        ))
+
+        conn.commit()
+
+        print("\n========== SALARY DETAILS ==========")
+        print("Monthly Salary :", monthly_salary)
+        print("Working Days   :", working_days)
+        print("Present Days   :", present_days)
+        print("Absent Days    :", absent_days)
+        print("Final Salary   :", round(salary, 2))
+
+
+    except ValueError:
+        print("Invalid input!")
+
+
+# ================= VIEW EMPLOYEES =================
+
+def view_employees():
+
+    cursor.execute("""
+    SELECT employee_id, name, department, monthly_salary
+    FROM employees
+    """)
+
+    employees = cursor.fetchall()
+
+    if not employees:
+        print("No employees found.")
+        return
+
+    print("\nID    Name              Department       Salary")
+    print("------------------------------------------------")
+
+    for emp in employees:
+        print(
+            emp[0],
+            " ",
+            emp[1],
+            " " * (18 - len(emp[1])),
+            emp[2],
+            " ",
+            emp[3]
+        )
+
+
+# ================= SEARCH EMPLOYEE =================
+
+def search_employee():
+
+    name = input("Enter employee name: ")
+
+    cursor.execute("""
+    SELECT employee_id, name, department, monthly_salary
+    FROM employees
+    WHERE name LIKE ?
+    """, ('%' + name + '%',))
+
+    employees = cursor.fetchall()
+
+    if not employees:
+        print("Employee not found!")
+        return
+
+    for emp in employees:
+        print("\nEmployee ID :", emp[0])
+        print("Name        :", emp[1])
+        print("Department  :", emp[2])
+        print("Salary      :", emp[3])
+
+
+# ================= MAIN MENU =================
+
+def main():
+
+    while True:
+
+        print("\n==========================================")
+        print(" EMPLOYEE ATTENDANCE & SALARY MANAGEMENT")
+        print("==========================================")
+
+        print("1. Add Employee")
+        print("2. Mark Attendance")
+        print("3. View Attendance")
+        print("4. Calculate Salary")
+        print("5. View All Employees")
+        print("6. Search Employee")
+        print("7. Exit")
+
+        choice = input("\nEnter your choice: ")
+
+        if choice == "1":
+            add_employee()
+
+        elif choice == "2":
+            mark_attendance()
+
+        elif choice == "3":
+            view_attendance()
+
+        elif choice == "4":
+            calculate_salary()
+
+        elif choice == "5":
+            view_employees()
+
+        elif choice == "6":
+            search_employee()
+
+        elif choice == "7":
+            print("Exiting...")
+            break
+
+        else:
+            print("Invalid choice!")
+
+
+# Start program
+main()
+
+# Close database
+conn.close()
